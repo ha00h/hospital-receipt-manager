@@ -38,6 +38,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
   ];
   while (cells.length % 7) cells.push(null);
 
+  const isMissed = (a: (typeof items)[number]) => !a.done && a.date < today;
   const dayItems = byDate.get(selected) ?? [];
   const dayReceipts = receiptsByDate.get(selected) ?? [];
 
@@ -108,7 +109,9 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
                     {list.slice(0, receiptCount ? 2 : 3).map((a) => (
                       <span
                         key={a.id}
-                        className={`h-1.5 w-1.5 rounded-full ${a.done ? "bg-slate-300" : "bg-orange-500"}`}
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          a.done ? "bg-slate-300" : isMissed(a) ? "bg-orange-200" : "bg-orange-500"
+                        }`}
                       />
                     ))}
                     {receiptCount > 0 && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />}
@@ -121,6 +124,10 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
             <span className="flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
               예약
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-orange-200" />
+              놓친 예약
             </span>
             <span className="flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />
@@ -157,10 +164,19 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
                       {a.done ? "✓" : ""}
                     </button>
                   </form>
-                  <div className={`min-w-0 flex-1 ${a.done ? "text-slate-400 line-through" : ""}`}>
+                  <div
+                    className={`min-w-0 flex-1 ${
+                      a.done ? "text-slate-400 line-through" : isMissed(a) ? "opacity-50" : ""
+                    }`}
+                  >
                     <p className="font-medium">
                       {a.time && <span className="mr-1.5 text-brand-700">{a.time}</span>}
                       {a.hospital}
+                      {isMissed(a) && (
+                        <span className="ml-1.5 rounded bg-orange-100 px-1.5 py-0.5 align-middle text-xs font-semibold text-orange-700">
+                          놓친 예약
+                        </span>
+                      )}
                     </p>
                     {a.purpose && <p className="text-sm text-slate-500">{a.purpose}</p>}
                     {a.memo && <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-400">{a.memo}</p>}
@@ -210,11 +226,14 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
                   <Link
                     href={`/calendar?month=${month}&date=${a.date}`}
                     scroll={false}
-                    className={`flex gap-3 ${a.done ? "text-slate-400 line-through" : ""}`}
+                    className={`flex gap-3 ${
+                      a.done ? "text-slate-400 line-through" : isMissed(a) ? "opacity-50" : ""
+                    }`}
                   >
                     <span className="w-16 shrink-0 text-slate-500">{formatShortDate(a.date)}</span>
                     <span className="w-11 shrink-0 text-slate-500">{a.time ?? ""}</span>
                     <span className="truncate">{a.hospital}</span>
+                    {isMissed(a) && <span className="shrink-0 text-xs text-orange-700">놓침</span>}
                   </Link>
                 </li>
               ))}

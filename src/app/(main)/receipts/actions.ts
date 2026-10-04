@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import { CATEGORIES, receipts, type Category } from "@/db/schema";
+import { completeAppointmentsFor } from "@/lib/appointments";
 import { requireAuth } from "@/lib/auth";
 import { deleteUpload, saveUpload } from "@/lib/storage";
 
@@ -57,6 +58,7 @@ export async function createReceipt(
     .values({ ...parsed.data, imagePath })
     .returning({ id: receipts.id })
     .get();
+  completeAppointmentsFor(parsed.data.date, parsed.data.hospital);
 
   revalidateAll();
   redirect(`/receipts/${row.id}`);
@@ -92,6 +94,7 @@ export async function updateReceipt(
     .set({ ...parsed.data, imagePath, updatedAt: sql`(datetime('now'))` })
     .where(eq(receipts.id, id))
     .run();
+  completeAppointmentsFor(parsed.data.date, parsed.data.hospital);
 
   if (imagePath !== existing.imagePath) await deleteUpload(existing.imagePath);
 

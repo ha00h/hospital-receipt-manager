@@ -29,6 +29,16 @@ export function listUpcomingAppointments(fromDate: string, limit: number) {
     .all();
 }
 
+export function completeAppointmentsFor(date: string, hospital: string) {
+  getDb()
+    .update(appointments)
+    .set({ done: true })
+    .where(
+      and(eq(appointments.date, date), eq(sql`trim(${appointments.hospital})`, hospital), eq(appointments.done, false)),
+    )
+    .run();
+}
+
 export function getAppointment(id: number) {
   return getDb().select().from(appointments).where(eq(appointments.id, id)).get();
 }
