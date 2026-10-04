@@ -16,11 +16,20 @@ CREATE TABLE IF NOT EXISTS receipts (
   category TEXT NOT NULL,
   amount INTEGER NOT NULL,
   memo TEXT,
-  image_path TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS receipts_date_idx ON receipts(date);
+
+CREATE TABLE IF NOT EXISTS receipt_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  receipt_id INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS receipt_images_receipt_idx ON receipt_images(receipt_id);
 
 CREATE TABLE IF NOT EXISTS appointments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,8 +52,23 @@ function createDb(): DB {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   const sqlite = new Database(path.join(/*turbopackIgnore: true*/ DATA_DIR, "app.db"));
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
   sqlite.exec(MIGRATION);
+  migrateSingleImageColumn(sqlite);
   return drizzle(sqlite, { schema });
+}
+
+// 초기 버전은 receipts.image_path 한 칸에 사진 한 장만 저장했다.
+function migrateSingleImageColumn(sqlite: Database.Database) {
+  const columns = sqlite.pragma("table_info(receipts)") as { name: string }[];
+  if (!columns.some((c) => c.name === "image_path")) return;
+  sqlite.transaction(() => {
+    sqlite.exec(`
+      INSERT INTO receipt_images (receipt_id, kind, path, position)
+      SELECT id, 'receipt', image_path, 0 FROM receipts WHERE image_path IS NOT NULL;
+      ALTER TABLE receipts DROP COLUMN image_path;
+    `);
+  })();
 }
 
 export function getDb(): DB {

@@ -3,7 +3,7 @@ import PageHeader from "@/components/PageHeader";
 import ReceiptForm from "@/components/ReceiptForm";
 import { requireAuth } from "@/lib/auth";
 import { todayKST } from "@/lib/format";
-import { getReceipt, listHospitalNamesByCategory } from "@/lib/receipts";
+import { getReceipt, listHospitalNamesByCategory, listReceiptImages } from "@/lib/receipts";
 import { updateReceipt } from "../../actions";
 
 export default async function EditReceiptPage({ params }: PageProps<"/receipts/[id]/edit">) {
@@ -20,6 +20,7 @@ export default async function EditReceiptPage({ params }: PageProps<"/receipts/[
         hospitals={listHospitalNamesByCategory()}
         defaultDate={todayKST()}
         receipt={receipt}
+        images={listReceiptImages(id)}
       />
     </>
   );

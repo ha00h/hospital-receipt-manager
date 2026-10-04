@@ -77,10 +77,10 @@ export default async function ReceiptsPage({ searchParams }: PageProps<"/receipt
               <li key={r.id}>
                 <Link href={`/receipts/${r.id}`} className="flex items-center gap-3 px-3 py-3 active:bg-slate-50">
                   <div className="h-14 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">
-                    {r.imagePath ? (
+                    {r.thumbnail ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={`/api/uploads/${r.imagePath}`}
+                        src={`/api/uploads/${r.thumbnail}`}
                         alt=""
                         loading="lazy"
                         className="h-full w-full object-cover"

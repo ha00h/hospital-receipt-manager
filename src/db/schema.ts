@@ -9,6 +9,17 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   pharmacy: "약제비",
 };
 
+export const IMAGE_KINDS = ["receipt", "detail", "other"] as const;
+export type ImageKind = (typeof IMAGE_KINDS)[number];
+
+export const IMAGE_KIND_LABEL: Record<ImageKind, string> = {
+  receipt: "영수증",
+  detail: "세부내역서",
+  other: "기타",
+};
+
+export const MAX_IMAGES_PER_RECEIPT = 10;
+
 export const receipts = sqliteTable("receipts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   date: text("date").notNull(),
@@ -16,9 +27,19 @@ export const receipts = sqliteTable("receipts", {
   category: text("category", { enum: CATEGORIES }).notNull(),
   amount: integer("amount").notNull(),
   memo: text("memo"),
-  imagePath: text("image_path"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const receiptImages = sqliteTable("receipt_images", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  receiptId: integer("receipt_id")
+    .notNull()
+    .references(() => receipts.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: IMAGE_KINDS }).notNull(),
+  path: text("path").notNull(),
+  position: integer("position").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
 export const appointments = sqliteTable("appointments", {
@@ -33,4 +54,5 @@ export const appointments = sqliteTable("appointments", {
 });
 
 export type Receipt = typeof receipts.$inferSelect;
+export type ReceiptImage = typeof receiptImages.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;

@@ -1,7 +1,7 @@
 import "server-only";
-import { and, asc, desc, eq, gte, like, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gte, like, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { receipts, type Category } from "@/db/schema";
+import { receiptImages, receipts, type Category } from "@/db/schema";
 
 export type ReceiptFilter = {
   month?: string;
@@ -15,7 +15,14 @@ export function listReceipts(filter: ReceiptFilter) {
   if (filter.category) conds.push(eq(receipts.category, filter.category));
   if (filter.q) conds.push(like(receipts.hospital, `%${filter.q}%`));
   return getDb()
-    .select()
+    .select({
+      ...getTableColumns(receipts),
+      thumbnail: sql<string | null>`(
+        select ri.path from receipt_images ri
+        where ri.receipt_id = "receipts"."id" and ri.kind = 'receipt'
+        order by ri.position, ri.id limit 1
+      )`,
+    })
     .from(receipts)
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(receipts.date), desc(receipts.id))
@@ -24,6 +31,15 @@ export function listReceipts(filter: ReceiptFilter) {
 
 export function getReceipt(id: number) {
   return getDb().select().from(receipts).where(eq(receipts.id, id)).get();
+}
+
+export function listReceiptImages(receiptId: number) {
+  return getDb()
+    .select()
+    .from(receiptImages)
+    .where(eq(receiptImages.receiptId, receiptId))
+    .orderBy(asc(receiptImages.position), asc(receiptImages.id))
+    .all();
 }
 
 export function listHospitalNames(category: Category) {
