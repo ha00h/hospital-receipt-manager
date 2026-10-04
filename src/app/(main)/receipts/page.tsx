@@ -1,9 +1,8 @@
 import Link from "next/link";
-import CategoryBadge from "@/components/CategoryBadge";
 import PageHeader from "@/components/PageHeader";
+import ReceiptList from "@/components/ReceiptList";
 import { CATEGORIES, type Category } from "@/db/schema";
 import { requireAuth } from "@/lib/auth";
-import { formatWon } from "@/lib/format";
 import { listReceiptMonths, listReceipts } from "@/lib/receipts";
 
 export default async function ReceiptsPage({ searchParams }: PageProps<"/receipts">) {
@@ -18,7 +17,6 @@ export default async function ReceiptsPage({ searchParams }: PageProps<"/receipt
 
   const rows = listReceipts({ month, category, q });
   const months = listReceiptMonths();
-  const sum = rows.reduce((acc, r) => acc + r.amount, 0);
 
   const href = (patch: Record<string, string | undefined>) => {
     const next = { month, category, q, ...patch };
@@ -58,62 +56,8 @@ export default async function ReceiptsPage({ searchParams }: PageProps<"/receipt
           ))}
         </div>
 
-        <div className="flex items-baseline justify-between px-1 text-sm text-slate-500">
-          <span>{rows.length}건</span>
-          <span>
-            합계 <b className="text-base text-slate-900">{formatWon(sum)}</b>
-          </span>
-        </div>
-
-        {rows.length === 0 ? (
-          <div className="rounded-2xl bg-white px-4 py-16 text-center text-sm text-slate-400 shadow-sm">
-            영수증이 없습니다.
-            <br />
-            오른쪽 아래 카메라 버튼으로 추가하세요.
-          </div>
-        ) : (
-          <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl bg-white shadow-sm">
-            {rows.map((r) => (
-              <li key={r.id}>
-                <Link href={`/receipts/${r.id}`} className="flex items-center gap-3 px-3 py-3 active:bg-slate-50">
-                  <div className="h-14 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">
-                    {r.thumbnail ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`/api/uploads/${r.thumbnail}`}
-                        alt=""
-                        loading="lazy"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-[10px] text-slate-400">
-                        사진 없음
-                      </div>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <p className="text-xs text-slate-400">{r.date}</p>
-                    <p className="truncate font-medium">{r.hospital}</p>
-                    <CategoryBadge category={r.category} />
-                  </div>
-                  <p className="font-semibold">{formatWon(r.amount)}</p>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ReceiptList rows={rows} />
       </div>
-
-      <Link
-        href="/receipts/new"
-        aria-label="영수증 추가"
-        className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] right-[max(1.25rem,calc(50vw-17rem))] z-30 flex h-14 w-14 items-center justify-center rounded-full bg-brand-600 text-white shadow-lg active:scale-95"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="h-7 w-7">
-          <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" strokeLinejoin="round" />
-          <circle cx="12" cy="13.5" r="3.5" />
-        </svg>
-      </Link>
     </>
   );
 }

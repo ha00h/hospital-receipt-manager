@@ -22,6 +22,7 @@ export function listReceipts(filter: ReceiptFilter) {
         where ri.receipt_id = "receipts"."id" and ri.kind = 'receipt'
         order by ri.position, ri.id limit 1
       )`,
+      photoCount: sql<number>`(select count(*) from receipt_images ri where ri.receipt_id = "receipts"."id")`,
     })
     .from(receipts)
     .where(conds.length ? and(...conds) : undefined)
