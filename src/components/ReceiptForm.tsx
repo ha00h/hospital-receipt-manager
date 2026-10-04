@@ -7,7 +7,7 @@ import type { Category, Receipt } from "@/db/schema";
 
 type Props = {
   action: (prev: ReceiptFormState, formData: FormData) => Promise<ReceiptFormState>;
-  hospitals: string[];
+  hospitals: Record<Category, string[]>;
   defaultDate: string;
   receipt?: Receipt;
 };
@@ -155,7 +155,7 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt }:
             className={inputClass}
           />
           <datalist id="hospital-list">
-            {hospitals.map((h) => (
+            {hospitals[category].map((h) => (
               <option key={h} value={h} />
             ))}
           </datalist>

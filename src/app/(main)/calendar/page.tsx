@@ -21,7 +21,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
         : `${month}-01`;
 
   const items = listAppointmentsInMonth(month);
-  const hospitals = listHospitalNames();
+  const hospitals = listHospitalNames("hospital");
   const byDate = new Map<string, typeof items>();
   for (const a of items) byDate.set(a.date, [...(byDate.get(a.date) ?? []), a]);
 

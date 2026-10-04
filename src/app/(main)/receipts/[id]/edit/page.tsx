@@ -3,7 +3,7 @@ import PageHeader from "@/components/PageHeader";
 import ReceiptForm from "@/components/ReceiptForm";
 import { requireAuth } from "@/lib/auth";
 import { todayKST } from "@/lib/format";
-import { getReceipt, listHospitalNames } from "@/lib/receipts";
+import { getReceipt, listHospitalNamesByCategory } from "@/lib/receipts";
 import { updateReceipt } from "../../actions";
 
 export default async function EditReceiptPage({ params }: PageProps<"/receipts/[id]/edit">) {
@@ -17,7 +17,7 @@ export default async function EditReceiptPage({ params }: PageProps<"/receipts/[
       <PageHeader title="영수증 수정" backHref={`/receipts/${id}`} />
       <ReceiptForm
         action={updateReceipt.bind(null, id)}
-        hospitals={listHospitalNames()}
+        hospitals={listHospitalNamesByCategory()}
         defaultDate={todayKST()}
         receipt={receipt}
       />

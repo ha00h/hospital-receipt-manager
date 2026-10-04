@@ -26,13 +26,18 @@ export function getReceipt(id: number) {
   return getDb().select().from(receipts).where(eq(receipts.id, id)).get();
 }
 
-export function listHospitalNames() {
+export function listHospitalNames(category: Category) {
   return getDb()
     .selectDistinct({ hospital: receipts.hospital })
     .from(receipts)
+    .where(eq(receipts.category, category))
     .orderBy(asc(receipts.hospital))
     .all()
     .map((r) => r.hospital);
+}
+
+export function listHospitalNamesByCategory(): Record<Category, string[]> {
+  return { hospital: listHospitalNames("hospital"), pharmacy: listHospitalNames("pharmacy") };
 }
 
 export function listReceiptMonths() {
