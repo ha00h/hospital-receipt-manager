@@ -39,21 +39,30 @@ export default async function ReceiptDetailPage({ params }: PageProps<"/receipts
                 </div>
                 <div className={ofKind.length > 1 ? "grid grid-cols-2 gap-2 p-3" : "p-3"}>
                   {ofKind.map((img) => (
-                    <a
-                      key={img.id}
-                      href={`/api/uploads/${img.path}`}
-                      target="_blank"
-                      className="block overflow-hidden rounded-xl bg-slate-50"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={`/api/uploads/${img.path}`}
-                        alt={IMAGE_KIND_LABEL[kind]}
-                        className={
-                          ofKind.length > 1 ? "aspect-[3/4] w-full object-cover" : "max-h-[60vh] w-full object-contain"
-                        }
-                      />
-                    </a>
+                    <div key={img.id} className="relative">
+                      <a
+                        href={`/api/uploads/${img.path}`}
+                        target="_blank"
+                        className="block overflow-hidden rounded-xl bg-slate-50"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/api/uploads/${img.path}`}
+                          alt={IMAGE_KIND_LABEL[kind]}
+                          className={
+                            ofKind.length > 1 ? "aspect-[3/4] w-full object-cover" : "max-h-[60vh] w-full object-contain"
+                          }
+                        />
+                      </a>
+                      <a
+                        href={`/api/images/${img.id}/download`}
+                        download
+                        className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
+                      >
+                        <DownloadIcon className="h-3.5 w-3.5" />
+                        다운로드
+                      </a>
+                    </div>
                   ))}
                 </div>
               </section>
@@ -63,6 +72,16 @@ export default async function ReceiptDetailPage({ params }: PageProps<"/receipts
           <div className="rounded-2xl bg-white py-10 text-center text-sm text-slate-400 shadow-sm">
             등록된 사진이 없습니다.
           </div>
+        )}
+        {images.length > 1 && (
+          <a
+            href={`/api/receipts/download?ids=${id}`}
+            download
+            className="flex items-center justify-center gap-1.5 rounded-2xl bg-white py-3 text-sm font-semibold text-brand-700 shadow-sm"
+          >
+            <DownloadIcon className="h-4 w-4" />
+            사진 {images.length}장 한 번에 받기
+          </a>
         )}
 
         <dl className="divide-y divide-slate-100 rounded-2xl bg-white px-4 shadow-sm">
@@ -87,6 +106,14 @@ export default async function ReceiptDetailPage({ params }: PageProps<"/receipts
         </form>
       </div>
     </>
+  );
+}
+
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={className}>
+      <path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
