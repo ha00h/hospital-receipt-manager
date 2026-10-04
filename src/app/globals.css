@@ -20,3 +20,21 @@ select,
 textarea {
   font-size: 16px;
 }
+
+/* iOS WebKit은 date/time 입력에 고유 최소 너비를 줘서 w-full이어도 부모 밖으로 넘친다 */
+input[type="date"],
+input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 2.875rem;
+  line-height: 1.5;
+}
+
+input[type="date"]::-webkit-date-and-time-value,
+input[type="time"]::-webkit-date-and-time-value {
+  text-align: left;
+  margin: 0;
+}
