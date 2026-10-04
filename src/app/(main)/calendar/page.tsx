@@ -1,11 +1,12 @@
 import Link from "next/link";
 import AppointmentSheet from "@/components/AppointmentSheet";
+import CategoryBadge from "@/components/CategoryBadge";
 import ConfirmSubmit from "@/components/ConfirmSubmit";
 import PageHeader from "@/components/PageHeader";
 import { requireAuth } from "@/lib/auth";
 import { listAppointmentsInMonth } from "@/lib/appointments";
-import { WEEKDAY_LABELS, currentMonthKST, formatShortDate, shiftMonth, todayKST } from "@/lib/format";
-import { listHospitalNames } from "@/lib/receipts";
+import { WEEKDAY_LABELS, currentMonthKST, formatShortDate, formatWon, shiftMonth, todayKST } from "@/lib/format";
+import { listHospitalNames, listReceipts } from "@/lib/receipts";
 import { deleteAppointment, toggleAppointment } from "./actions";
 
 export default async function CalendarPage({ searchParams }: PageProps<"/calendar">) {
@@ -24,6 +25,9 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
   const hospitals = listHospitalNames("hospital");
   const byDate = new Map<string, typeof items>();
   for (const a of items) byDate.set(a.date, [...(byDate.get(a.date) ?? []), a]);
+  const monthReceipts = listReceipts({ month }).reverse();
+  const receiptsByDate = new Map<string, typeof monthReceipts>();
+  for (const r of monthReceipts) receiptsByDate.set(r.date, [...(receiptsByDate.get(r.date) ?? []), r]);
 
   const [y, m] = month.split("-").map(Number);
   const firstWeekday = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
@@ -35,6 +39,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
   while (cells.length % 7) cells.push(null);
 
   const dayItems = byDate.get(selected) ?? [];
+  const dayReceipts = receiptsByDate.get(selected) ?? [];
 
   return (
     <>
@@ -73,6 +78,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
             {cells.map((d, i) => {
               if (!d) return <div key={i} />;
               const list = byDate.get(d) ?? [];
+              const receiptCount = receiptsByDate.get(d)?.length ?? 0;
               const isSelected = d === selected;
               const isToday = d === today;
               const weekday = i % 7;
@@ -99,16 +105,27 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
                     {Number(d.slice(8))}
                   </span>
                   <span className="flex h-1.5 gap-0.5">
-                    {list.slice(0, 3).map((a) => (
+                    {list.slice(0, receiptCount ? 2 : 3).map((a) => (
                       <span
                         key={a.id}
                         className={`h-1.5 w-1.5 rounded-full ${a.done ? "bg-slate-300" : "bg-orange-500"}`}
                       />
                     ))}
+                    {receiptCount > 0 && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />}
                   </span>
                 </Link>
               );
             })}
+          </div>
+          <div className="mt-1 flex justify-end gap-3 px-1 text-xs text-slate-400">
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+              예약
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />
+              영수증
+            </span>
           </div>
         </section>
 
@@ -123,7 +140,9 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
             />
           </div>
           {dayItems.length === 0 ? (
-            <p className="py-4 text-center text-sm text-slate-400">이 날은 예약이 없습니다.</p>
+            dayReceipts.length === 0 && (
+              <p className="py-4 text-center text-sm text-slate-400">이 날은 예약이 없습니다.</p>
+            )
           ) : (
             <ul className="divide-y divide-slate-100">
               {dayItems.map((a) => (
@@ -163,6 +182,22 @@ export default async function CalendarPage({ searchParams }: PageProps<"/calenda
                 </li>
               ))}
             </ul>
+          )}
+          {dayReceipts.length > 0 && (
+            <div className={dayItems.length ? "mt-2 border-t border-slate-100 pt-3" : ""}>
+              <h3 className="mb-1 text-sm font-medium text-slate-500">영수증</h3>
+              <ul className="divide-y divide-slate-100">
+                {dayReceipts.map((r) => (
+                  <li key={r.id}>
+                    <Link href={`/receipts/${r.id}`} className="flex items-center gap-2 py-2.5">
+                      <CategoryBadge category={r.category} />
+                      <span className="min-w-0 flex-1 truncate">{r.hospital}</span>
+                      <span className="shrink-0 font-semibold">{formatWon(r.amount)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </section>
 

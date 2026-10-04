@@ -28,10 +28,11 @@ export function getReceipt(id: number) {
 
 export function listHospitalNames(category: Category) {
   return getDb()
-    .selectDistinct({ hospital: receipts.hospital })
+    .select({ hospital: receipts.hospital })
     .from(receipts)
     .where(eq(receipts.category, category))
-    .orderBy(asc(receipts.hospital))
+    .groupBy(receipts.hospital)
+    .orderBy(desc(sql`count(*)`), desc(sql`max(${receipts.date})`), asc(receipts.hospital))
     .all()
     .map((r) => r.hospital);
 }
