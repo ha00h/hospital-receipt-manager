@@ -3,6 +3,7 @@
 import imageCompression from "browser-image-compression";
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { ReceiptFormState } from "@/app/(main)/receipts/actions";
+import ScanEditor from "@/components/ScanEditor";
 import {
   IMAGE_KINDS,
   IMAGE_KIND_LABEL,
@@ -52,6 +53,7 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
   const [compressingKind, setCompressingKind] = useState<ImageKind | null>(null);
   const compressing = compressingKind !== null;
   const [clientError, setClientError] = useState<string | null>(null);
+  const [scanQueue, setScanQueue] = useState<{ kind: ImageKind; files: File[]; total: number } | null>(null);
   const [category, setCategory] = useState<Category>(receipt?.category ?? "hospital");
   const [amount, setAmount] = useState(receipt ? receipt.amount.toLocaleString("ko-KR") : "");
   const pickKind = useRef<ImageKind>("receipt");
@@ -75,22 +77,26 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
     (source === "camera" ? cameraRef : albumRef).current?.click();
   }
 
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!files.length) return;
-    const kind = pickKind.current;
     setClientError(files.length > remaining ? `사진은 ${MAX_IMAGES_PER_RECEIPT}장까지 올릴 수 있습니다.` : null);
+    const accepted = files.slice(0, Math.max(remaining, 0));
+    if (accepted.length) setScanQueue({ kind: pickKind.current, files: accepted, total: accepted.length });
+  }
+
+  function nextScan() {
+    setScanQueue((q) => (q && q.files.length > 1 ? { ...q, files: q.files.slice(1) } : null));
+  }
+
+  async function addImage(kind: ImageKind, file: File) {
     setCompressingKind(kind);
-    const added: PendingImage[] = [];
-    for (const file of files.slice(0, Math.max(remaining, 0))) {
-      const result = await compress(file);
-      const url = URL.createObjectURL(result);
-      urlsRef.current.push(url);
-      added.push({ key: url, kind, file: result, url });
-    }
+    const result = await compress(file);
+    const url = URL.createObjectURL(result);
+    urlsRef.current.push(url);
+    setNewImages((prev) => [...prev, { key: url, kind, file: result, url }]);
     setCompressingKind(null);
-    setNewImages((prev) => [...prev, ...added]);
   }
 
   function removeNew(key: string) {
@@ -206,6 +212,27 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
 
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={onPick} />
       <input ref={albumRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
+
+      {scanQueue && (
+        <ScanEditor
+          key={`${scanQueue.total - scanQueue.files.length}-${scanQueue.files[0].name}-${scanQueue.files[0].lastModified}`}
+          file={scanQueue.files[0]}
+          defaultMode={scanQueue.kind === "other" ? "color" : "scan"}
+          progress={
+            scanQueue.total > 1 ? `${scanQueue.total - scanQueue.files.length + 1}/${scanQueue.total}` : undefined
+          }
+          onDone={async (file) => {
+            await addImage(scanQueue.kind, file);
+            nextScan();
+          }}
+          onSkip={async () => {
+            const { kind, files } = scanQueue;
+            nextScan();
+            await addImage(kind, files[0]);
+          }}
+          onCancel={nextScan}
+        />
+      )}
 
       <section className="space-y-4 rounded-2xl bg-white p-4 shadow-sm">
         <Field label="구분">
