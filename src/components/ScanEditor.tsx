@@ -8,7 +8,8 @@ type Props = {
   file: File;
   defaultMode: ScanMode;
   progress?: string;
-  onDone: (file: File) => void | Promise<void>;
+  onDone: (file: File, compressed?: boolean) => void | Promise<void>;
+  onRead?: (file: File, onProgress: (ratio: number) => void) => Promise<File>;
   onSkip: () => void | Promise<void>;
   onCancel: () => void;
 };
@@ -18,10 +19,12 @@ type Loaded = { source: HTMLCanvasElement; url: string; auto: Quad };
 const LOUPE = 112;
 const LOUPE_ZOOM = 2.5;
 
-export default function ScanEditor({ file, defaultMode, progress, onDone, onSkip, onCancel }: Props) {
+export default function ScanEditor({ file, defaultMode, progress, onDone, onRead, onSkip, onCancel }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [quad, setQuad] = useState<Quad | null>(null);
   const [mode, setMode] = useState<ScanMode>(defaultMode);
+  const [readText, setReadText] = useState(Boolean(onRead));
+  const [readProgress, setReadProgress] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [dragging, setDragging] = useState<number | null>(null);
@@ -81,13 +84,21 @@ export default function ScanEditor({ file, defaultMode, progress, onDone, onSkip
     setQuad(next);
   }
 
-  async function finish() {
-    if (!source || !quad) return;
+  async function finish(useOriginal = false) {
+    if (!useOriginal && (!source || !quad)) return;
     setBusy(true);
     try {
-      await onDone(await renderScan(source, quad, mode));
+      let output = useOriginal ? file : await renderScan(source!, quad!, mode);
+      let compressed = false;
+      if (readText && onRead) {
+        setReadProgress(0);
+        output = await onRead(output, (ratio) => setReadProgress((prev) => Math.max(prev ?? 0, ratio)));
+        compressed = true;
+      }
+      await onDone(output, compressed);
     } finally {
       setBusy(false);
+      setReadProgress(null);
     }
   }
 
@@ -103,7 +114,7 @@ export default function ScanEditor({ file, defaultMode, progress, onDone, onSkip
         <p className="text-sm font-semibold">
           문서 영역 맞추기{progress && <span className="ml-1.5 font-normal text-slate-400">{progress}</span>}
         </p>
-        <button type="button" onClick={() => onSkip()} disabled={busy} className="py-1 text-sm text-slate-300">
+        <button type="button" onClick={() => void finish(true)} disabled={busy} className="py-1 text-sm text-slate-300">
           원본 사용
         </button>
       </div>
@@ -210,14 +221,47 @@ export default function ScanEditor({ file, defaultMode, progress, onDone, onSkip
             </button>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={finish}
-          disabled={!quad || busy}
-          className="w-full rounded-2xl bg-brand-600 py-3.5 font-semibold disabled:opacity-60"
-        >
-          {busy ? "처리 중..." : "완료"}
-        </button>
+        {readProgress !== null ? (
+          <div className="space-y-2">
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(readProgress * 100)}
+              aria-label="글자 인식 진행률"
+              className="h-2 overflow-hidden rounded-full bg-white/15"
+            >
+              <div
+                className="h-full rounded-full bg-teal-300 transition-[width] duration-200"
+                style={{ width: `${Math.max(4, Math.round(readProgress * 100))}%` }}
+              />
+            </div>
+            <p className="text-center text-sm text-slate-200">글자를 읽는 중... {Math.round(readProgress * 100)}%</p>
+          </div>
+        ) : (
+          <>
+            {onRead && (
+              <label className="flex items-center gap-2.5 text-sm text-slate-100">
+                <input
+                  type="checkbox"
+                  checked={readText}
+                  disabled={busy}
+                  onChange={(event) => setReadText(event.target.checked)}
+                  className="h-5 w-5 accent-teal-400"
+                />
+                글자 인식으로 날짜·병원·금액 채우기
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => void finish()}
+              disabled={!quad || busy}
+              className="w-full rounded-2xl bg-brand-600 py-3.5 font-semibold disabled:opacity-60"
+            >
+              {busy ? "처리 중..." : "완료"}
+            </button>
+          </>
+        )}
       </div>
     </div>,
     document.body,

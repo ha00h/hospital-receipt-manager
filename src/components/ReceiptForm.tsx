@@ -3,6 +3,8 @@
 import imageCompression from "browser-image-compression";
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { ReceiptFormState } from "@/app/(main)/receipts/actions";
+import { readReceiptLocally } from "@/lib/ocrReceipt";
+import type { ReceiptRead } from "@/lib/receiptRead";
 import ScanEditor from "@/components/ScanEditor";
 import {
   IMAGE_KINDS,
@@ -55,10 +57,19 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
   const [clientError, setClientError] = useState<string | null>(null);
   const [scanQueue, setScanQueue] = useState<{ kind: ImageKind; files: File[]; total: number } | null>(null);
   const [category, setCategory] = useState<Category>(receipt?.category ?? "hospital");
+  const [date, setDate] = useState(receipt?.date ?? defaultDate);
+  const [hospital, setHospital] = useState(receipt?.hospital ?? "");
   const [amount, setAmount] = useState(receipt ? receipt.amount.toLocaleString("ko-KR") : "");
-  const pickKind = useRef<ImageKind>("receipt");
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const albumRef = useRef<HTMLInputElement>(null);
+  const [reading, setReading] = useState(false);
+  const [readProgress, setReadProgress] = useState(0);
+  const [readNote, setReadNote] = useState<{ tone: "info" | "error"; text: string } | null>(null);
+  const edited = useRef({
+    date: Boolean(receipt),
+    hospital: Boolean(receipt),
+    amount: Boolean(receipt),
+    category: Boolean(receipt),
+  });
+  const readSeq = useRef(0);
   const urlsRef = useRef<string[]>([]);
 
   useEffect(() => () => urlsRef.current.forEach((u) => URL.revokeObjectURL(u)), []);
@@ -72,31 +83,119 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
     kind === "receipt" || openExtras.includes(kind as ExtraKind) || countOf(kind) > 0;
   const hiddenExtras = EXTRA_KINDS.filter((k) => !isVisible(k));
 
-  function openPicker(kind: ImageKind, source: "camera" | "album") {
-    pickKind.current = kind;
-    (source === "camera" ? cameraRef : albumRef).current?.click();
-  }
-
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPick(kind: ImageKind, e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!files.length) return;
     setClientError(files.length > remaining ? `사진은 ${MAX_IMAGES_PER_RECEIPT}장까지 올릴 수 있습니다.` : null);
     const accepted = files.slice(0, Math.max(remaining, 0));
-    if (accepted.length) setScanQueue({ kind: pickKind.current, files: accepted, total: accepted.length });
+    if (accepted.length) setScanQueue({ kind, files: accepted, total: accepted.length });
   }
 
   function nextScan() {
     setScanQueue((q) => (q && q.files.length > 1 ? { ...q, files: q.files.slice(1) } : null));
   }
 
-  async function addImage(kind: ImageKind, file: File) {
+  async function addImage(kind: ImageKind, file: File, compressed = false) {
     setCompressingKind(kind);
-    const result = await compress(file);
+    const result = compressed ? file : await compress(file);
     const url = URL.createObjectURL(result);
     urlsRef.current.push(url);
     setNewImages((prev) => [...prev, { key: url, kind, file: result, url }]);
     setCompressingKind(null);
+  }
+
+  async function readChosen(file: File, onProgress: (ratio: number) => void) {
+    onProgress(0.04);
+    const compressed = await compress(file);
+    onProgress(0.08);
+    await readIntoForm(compressed, false, onProgress);
+    return compressed;
+  }
+
+  function applyRead(fields: ReceiptRead, force: boolean) {
+    const nextCategory = fields.category && (force || !edited.current.category) ? fields.category : category;
+    const place = nextCategory === "pharmacy" ? "약국" : "병원";
+    let filled = 0;
+    const missed: string[] = [];
+
+    if (fields.category && (force || !edited.current.category)) {
+      setCategory(fields.category);
+      edited.current.category = true;
+      filled += 1;
+    }
+    if (!fields.date) missed.push("날짜");
+    else if (force || !edited.current.date) {
+      setDate(fields.date);
+      edited.current.date = true;
+      filled += 1;
+    }
+    if (!fields.hospital) missed.push(place);
+    else if (force || !edited.current.hospital) {
+      setHospital(fields.hospital);
+      edited.current.hospital = true;
+      filled += 1;
+    }
+    if (!fields.amount) missed.push("금액");
+    else if (force || !edited.current.amount) {
+      setAmount(fields.amount.toLocaleString("ko-KR"));
+      edited.current.amount = true;
+      filled += 1;
+    }
+    return { filled, missed };
+  }
+
+  async function sourceForRead() {
+    const pending = [...newImages].reverse();
+    const found = pending.find((img) => img.kind === "receipt") ?? pending.find((img) => img.kind === "detail");
+    if (found) return found.file;
+    const saved = [...kept].reverse();
+    const image = saved.find((img) => img.kind === "receipt") ?? saved.find((img) => img.kind === "detail");
+    if (!image) return null;
+    const response = await fetch(`/api/uploads/${image.path}`);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return new File([blob], "receipt.jpg", { type: blob.type || "image/jpeg" });
+  }
+
+  async function readIntoForm(file: File, force: boolean, onProgress?: (ratio: number) => void) {
+    const seq = ++readSeq.current;
+    setReading(true);
+    setReadProgress(0);
+    setReadNote(null);
+    const report = (ratio: number) => {
+      setReadProgress((prev) => Math.max(prev, ratio));
+      onProgress?.(ratio);
+    };
+    try {
+      const result = await readReceiptLocally(file, hospitals, report);
+      if (seq !== readSeq.current) return;
+      const { filled, missed } = applyRead(result, force);
+      if (filled === 0) {
+        setReadNote({ tone: "info", text: "이미 입력한 내용은 바꾸지 않았어요." });
+      } else if (missed.length) {
+        setReadNote({ tone: "info", text: `사진에서 읽어 채웠어요. 찾지 못한 칸: ${missed.join(", ")}.` });
+      } else {
+        setReadNote({ tone: "info", text: "사진에서 읽어 채웠어요. 맞는지 확인해 주세요." });
+      }
+    } catch (error) {
+      if (seq !== readSeq.current) return;
+      setReadNote({
+        tone: "error",
+        text: error instanceof Error ? error.message : "영수증을 읽지 못했어요. 다시 시도해 주세요.",
+      });
+    } finally {
+      if (seq === readSeq.current) setReading(false);
+    }
+  }
+
+  async function readLatest() {
+    const file = await sourceForRead();
+    if (!file) {
+      setReadNote({ tone: "error", text: "읽을 영수증 사진이 없습니다." });
+      return;
+    }
+    await readIntoForm(file, true);
   }
 
   function removeNew(key: string) {
@@ -154,22 +253,8 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
               </div>
             )}
             <div className="grid grid-cols-2 border-t border-slate-100 text-sm font-medium">
-              <button
-                type="button"
-                disabled={remaining <= 0 || compressing}
-                onClick={() => openPicker(kind, "camera")}
-                className="py-3 text-brand-700 active:bg-slate-50 disabled:text-slate-300"
-              >
-                사진 촬영
-              </button>
-              <button
-                type="button"
-                disabled={remaining <= 0 || compressing}
-                onClick={() => openPicker(kind, "album")}
-                className="border-l border-slate-100 py-3 text-slate-600 active:bg-slate-50 disabled:text-slate-300"
-              >
-                앨범에서 선택
-              </button>
+              <PhotoPicker kind={kind} source="camera" disabled={remaining <= 0 || compressing} onPick={onPick} />
+              <PhotoPicker kind={kind} source="album" disabled={remaining <= 0 || compressing} onPick={onPick} />
             </div>
           </section>
         );
@@ -210,8 +295,18 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
           </section>
         ))}
 
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={onPick} />
-      <input ref={albumRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
+      {countOf("receipt") + countOf("detail") > 0 && (
+        <div className="text-center">
+          <button
+            type="button"
+            disabled={reading || compressing}
+            onClick={() => void readLatest()}
+            className="text-sm font-medium text-brand-700 disabled:text-slate-300"
+          >
+            {reading ? "영수증을 읽는 중..." : "사진에서 날짜·병원·금액 읽기"}
+          </button>
+        </div>
+      )}
 
       {scanQueue && (
         <ScanEditor
@@ -221,8 +316,9 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
           progress={
             scanQueue.total > 1 ? `${scanQueue.total - scanQueue.files.length + 1}/${scanQueue.total}` : undefined
           }
-          onDone={async (file) => {
-            await addImage(scanQueue.kind, file);
+          onRead={scanQueue.kind === "other" ? undefined : readChosen}
+          onDone={async (file, compressed) => {
+            await addImage(scanQueue.kind, file, Boolean(compressed));
             nextScan();
           }}
           onSkip={async () => {
@@ -235,6 +331,29 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
       )}
 
       <section className="space-y-4 rounded-2xl bg-white p-4 shadow-sm">
+        {(reading || readNote) && (
+          <div className="space-y-2">
+            {reading && (
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(readProgress * 100)}
+                aria-label="글자 인식 진행률"
+                className="h-1.5 overflow-hidden rounded-full bg-brand-100"
+              >
+                <div
+                  className="h-full rounded-full bg-brand-600 transition-[width] duration-200"
+                  style={{ width: `${Math.max(4, Math.round(readProgress * 100))}%` }}
+                />
+              </div>
+            )}
+            <p className={reading || readNote?.tone === "info" ? "text-sm text-brand-700" : "text-sm text-red-600"}>
+              {reading ? `영수증을 읽는 중... ${Math.round(readProgress * 100)}%` : readNote?.text}
+            </p>
+          </div>
+        )}
+
         <Field label="구분">
           <div className="grid grid-cols-2 gap-2">
             {(
@@ -246,7 +365,10 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
               <button
                 key={value}
                 type="button"
-                onClick={() => setCategory(value)}
+                onClick={() => {
+                  edited.current.category = true;
+                  setCategory(value);
+                }}
                 className={`rounded-xl border py-2.5 text-sm font-semibold ${
                   category === value
                     ? value === "hospital"
@@ -266,7 +388,11 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
             type="date"
             name="date"
             required
-            defaultValue={receipt?.date ?? defaultDate}
+            value={date}
+            onChange={(e) => {
+              edited.current.date = true;
+              setDate(e.target.value);
+            }}
             className={inputClass}
           />
         </Field>
@@ -277,7 +403,11 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
             required
             list="hospital-list"
             autoComplete="off"
-            defaultValue={receipt?.hospital}
+            value={hospital}
+            onChange={(e) => {
+              edited.current.hospital = true;
+              setHospital(e.target.value);
+            }}
             placeholder={category === "pharmacy" ? "예: 연세약국" : "예: 서울내과"}
             className={inputClass}
           />
@@ -296,6 +426,7 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
               inputMode="numeric"
               value={amount}
               onChange={(e) => {
+                edited.current.amount = true;
                 const digits = e.target.value.replace(/[^\d]/g, "");
                 setAmount(digits ? Number(digits).toLocaleString("ko-KR") : "");
               }}
@@ -320,7 +451,7 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
       {(clientError ?? state.error) && <p className="px-1 text-sm text-red-600">{clientError ?? state.error}</p>}
 
       <button
-        disabled={pending || compressing}
+        disabled={pending || compressing || reading}
         className="w-full rounded-2xl bg-brand-600 py-3.5 font-semibold text-white shadow-sm disabled:opacity-60"
       >
         {pending ? "저장 중..." : receipt ? "수정 저장" : "영수증 저장"}
@@ -331,6 +462,39 @@ export default function ReceiptForm({ action, hospitals, defaultDate, receipt, i
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-brand-500";
+
+function PhotoPicker({
+  kind,
+  source,
+  disabled,
+  onPick,
+}: {
+  kind: ImageKind;
+  source: "camera" | "album";
+  disabled: boolean;
+  onPick: (kind: ImageKind, event: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  const camera = source === "camera";
+  return (
+    <label
+      className={`relative block py-3 text-center active:bg-slate-50 ${camera ? "" : "border-l border-slate-100"} ${
+        disabled ? "text-slate-300" : camera ? "text-brand-700" : "text-slate-600"
+      }`}
+    >
+      {camera ? "사진 촬영" : "앨범에서 선택"}
+      {/* iOS는 숨긴 입력을 스크립트로 누르면 카메라가 열리지 않는다. 탭이 입력에 직접 닿게 둔다. */}
+      <input
+        type="file"
+        accept="image/*"
+        capture={camera ? "environment" : undefined}
+        multiple={!camera}
+        disabled={disabled}
+        className="absolute inset-0 h-full w-full opacity-0 disabled:pointer-events-none"
+        onChange={(event) => onPick(kind, event)}
+      />
+    </label>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

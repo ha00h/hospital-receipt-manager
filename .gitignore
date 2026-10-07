@@ -43,3 +43,6 @@ next-env.d.ts
 
 # app data
 /data
+
+# on-device OCR runtime, copied from node_modules before dev/build
+/public/tesseract
