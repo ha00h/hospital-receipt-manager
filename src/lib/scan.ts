@@ -5,7 +5,7 @@ export type ScanMode = "scan" | "color";
 
 const MAX_SOURCE_SIDE = 2400;
 const MAX_OUTPUT_SIDE = 2000;
-const DETECT_SIDE = 256;
+const DETECT_SIDE = 360;
 
 /** Decodes the file with EXIF orientation applied, downscaled so phones don't run out of canvas memory. */
 export async function loadSource(file: File): Promise<HTMLCanvasElement> {
@@ -31,8 +31,8 @@ export function insetQuad(width: number, height: number, ratio = 0.08): Quad {
 }
 
 /**
- * Guesses where the paper is: the largest bright region after Otsu thresholding.
- * Falls back to a slightly inset frame when the region is implausibly small.
+ * Finds the paper corners. Strong edges are traced first, and the four sharpest
+ * bends on that outline become the corners. A bright page is the fallback.
  */
 export function guessQuad(source: HTMLCanvasElement): Quad {
   const scale = Math.min(1, DETECT_SIDE / Math.max(source.width, source.height));
@@ -44,21 +44,100 @@ export function guessQuad(source: HTMLCanvasElement): Quad {
   const ctx = small.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(source, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
-
   const gray = new Uint8Array(w * h);
-  const hist = new Uint32Array(256);
   for (let i = 0; i < w * h; i++) {
-    const g = (data[i * 4] * 77 + data[i * 4 + 1] * 150 + data[i * 4 + 2] * 29) >> 8;
-    gray[i] = g;
-    hist[g]++;
+    gray[i] = (data[i * 4] * 77 + data[i * 4 + 1] * 150 + data[i * 4 + 2] * 29) >> 8;
   }
-  const threshold = otsu(hist, w * h);
 
+  const detected = detectDocumentQuad(gray, w, h);
+  if (!detected) return insetQuad(source.width, source.height);
+  const quad = detected.map((p) => ({
+    x: Math.min(source.width, Math.max(0, (p.x + 0.5) / scale)),
+    y: Math.min(source.height, Math.max(0, (p.y + 0.5) / scale)),
+  })) as Quad;
+  const cx = quad.reduce((sum, p) => sum + p.x, 0) / 4;
+  const cy = quad.reduce((sum, p) => sum + p.y, 0) / 4;
+  // Pull corners slightly inward so a sliver of background doesn't survive the crop.
+  const shrunk = quad.map((p) => ({ x: p.x + (cx - p.x) * 0.015, y: p.y + (cy - p.y) * 0.015 })) as Quad;
+  return quadArea(shrunk) < source.width * source.height * 0.08 ? insetQuad(source.width, source.height) : shrunk;
+}
+
+/** Corners in the given grayscale image, or null when no page outline is convincing. */
+export function detectDocumentQuad(gray: Uint8Array, w: number, h: number): Quad | null {
+  const blurred = boxBlur(gray, w, h, 1);
+  const fromEdges = quadFromMask(dilate(strongEdges(blurred, w, h), w, h), w, h);
+  if (fromEdges) return fromEdges;
+  return quadFromMask(brightPaper(blurred, w, h), w, h);
+}
+
+function strongEdges(gray: Uint8Array, w: number, h: number) {
+  const mag = new Float32Array(w * h);
+  let max = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx =
+        -gray[i - w - 1] + gray[i - w + 1] - 2 * gray[i - 1] + 2 * gray[i + 1] - gray[i + w - 1] + gray[i + w + 1];
+      const gy =
+        -gray[i - w - 1] - 2 * gray[i - w] - gray[i - w + 1] + gray[i + w - 1] + 2 * gray[i + w] + gray[i + w + 1];
+      const value = Math.hypot(gx, gy);
+      mag[i] = value;
+      if (value > max) max = value;
+    }
+  }
+  const mask = new Uint8Array(w * h);
+  if (max < 40) return mask;
+  const cut = max * 0.28;
+  for (let i = 0; i < mag.length; i++) if (mag[i] >= cut) mask[i] = 1;
+  return mask;
+}
+
+function brightPaper(gray: Uint8Array, w: number, h: number) {
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+  const threshold = otsu(hist, gray.length);
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < gray.length; i++) if (gray[i] > threshold) mask[i] = 1;
+  return mask;
+}
+
+function dilate(mask: Uint8Array, w: number, h: number) {
+  const out = mask.slice();
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      if (mask[i] || mask[i - 1] || mask[i + 1] || mask[i - w] || mask[i + w]) out[i] = 1;
+    }
+  }
+  return out;
+}
+
+/** Largest region, then the four sharpest bends on its convex outline. */
+function quadFromMask(mask: Uint8Array, w: number, h: number): Quad | null {
+  const component = largestComponent(mask, w, h);
+  if (!component || component.length < w * h * 0.02) return null;
+  const boundary: Point[] = [];
+  for (const p of component) {
+    const x = p % w;
+    const y = (p - x) / w;
+    const edge =
+      x === 0 || y === 0 || x === w - 1 || y === h - 1 || !mask[p - 1] || !mask[p + 1] || !mask[p - w] || !mask[p + w];
+    if (edge) boundary.push({ x, y });
+  }
+  const hull = convexHull(boundary);
+  const corners = sharpCorners(hull) ?? extremeCorners(hull);
+  if (!corners || !isConvexQuad(corners)) return null;
+  const area = quadArea(corners);
+  if (area < w * h * 0.12 || area > w * h * 0.98) return null;
+  return corners;
+}
+
+function largestComponent(mask: Uint8Array, w: number, h: number) {
   const labels = new Int32Array(w * h).fill(-1);
   const stack = new Int32Array(w * h);
   let best: number[] = [];
   for (let start = 0; start < w * h; start++) {
-    if (labels[start] !== -1 || gray[start] <= threshold) continue;
+    if (labels[start] !== -1 || !mask[start]) continue;
     const pixels: number[] = [];
     let top = 0;
     stack[top++] = start;
@@ -69,35 +148,139 @@ export function guessQuad(source: HTMLCanvasElement): Quad {
       const x = p % w;
       const neighbors = [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w];
       for (const n of neighbors) {
-        if (n < 0 || n >= w * h || labels[n] !== -1 || gray[n] <= threshold) continue;
+        if (n < 0 || n >= w * h || labels[n] !== -1 || !mask[n]) continue;
         labels[n] = start;
         stack[top++] = n;
       }
     }
     if (pixels.length > best.length) best = pixels;
   }
+  return best.length ? best : null;
+}
 
-  if (best.length < w * h * 0.08) return insetQuad(source.width, source.height);
-
-  let tl = best[0], tr = best[0], br = best[0], bl = best[0];
-  const sum = (p: number) => (p % w) + Math.floor(p / w);
-  const diff = (p: number) => (p % w) - Math.floor(p / w);
-  for (const p of best) {
-    if (sum(p) < sum(tl)) tl = p;
-    if (sum(p) > sum(br)) br = p;
-    if (diff(p) > diff(tr)) tr = p;
-    if (diff(p) < diff(bl)) bl = p;
+function sharpCorners(hull: Point[]): Quad | null {
+  const n = hull.length;
+  if (n < 4) return null;
+  const deviation = hull.map((_, i) => Math.PI - interiorAngle(hull[(i - 1 + n) % n], hull[i], hull[(i + 1) % n]));
+  const ranked = hull.map((_, i) => i).sort((a, b) => deviation[b] - deviation[a]);
+  const chosen: number[] = [];
+  const minSep = Math.max(1, Math.floor(n / 8));
+  for (const index of ranked) {
+    if (deviation[index] < 0.45) break;
+    if (chosen.every((other) => circularDistance(index, other, n) >= minSep)) chosen.push(index);
+    if (chosen.length === 4) break;
   }
-  const toSource = (p: number): Point => ({
-    x: Math.min(source.width, ((p % w) + 0.5) / scale),
-    y: Math.min(source.height, (Math.floor(p / w) + 0.5) / scale),
-  });
-  const corners = [toSource(tl), toSource(tr), toSource(br), toSource(bl)];
-  const cx = corners.reduce((s, p) => s + p.x, 0) / 4;
-  const cy = corners.reduce((s, p) => s + p.y, 0) / 4;
-  // Pull corners slightly inward so a sliver of background doesn't survive the crop.
-  const quad = corners.map((p) => ({ x: p.x + (cx - p.x) * 0.015, y: p.y + (cy - p.y) * 0.015 })) as Quad;
-  return quadArea(quad) < source.width * source.height * 0.08 ? insetQuad(source.width, source.height) : quad;
+  if (chosen.length < 4) return null;
+  return orderQuad(chosen.map((index) => hull[index]));
+}
+
+function extremeCorners(hull: Point[]): Quad | null {
+  if (hull.length < 4) return null;
+  let tl = hull[0];
+  let tr = hull[0];
+  let br = hull[0];
+  let bl = hull[0];
+  for (const p of hull) {
+    if (p.x + p.y < tl.x + tl.y) tl = p;
+    if (p.x - p.y > tr.x - tr.y) tr = p;
+    if (p.x + p.y > br.x + br.y) br = p;
+    if (p.x - p.y < bl.x - bl.y) bl = p;
+  }
+  return orderQuad([tl, tr, br, bl]);
+}
+
+function orderQuad(points: Point[]): Quad | null {
+  const unique: Point[] = [];
+  for (const point of points) {
+    if (!unique.some((other) => other.x === point.x && other.y === point.y)) unique.push(point);
+  }
+  if (unique.length !== 4) return null;
+  const cx = unique.reduce((sum, p) => sum + p.x, 0) / 4;
+  const cy = unique.reduce((sum, p) => sum + p.y, 0) / 4;
+  const sorted = [...unique].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+  let start = 0;
+  for (let i = 1; i < 4; i++) if (sorted[i].x + sorted[i].y < sorted[start].x + sorted[start].y) start = i;
+  return [0, 1, 2, 3].map((i) => sorted[(start + i) % 4]) as Quad;
+}
+
+function interiorAngle(prev: Point, point: Point, next: Point) {
+  const v1x = prev.x - point.x;
+  const v1y = prev.y - point.y;
+  const v2x = next.x - point.x;
+  const v2y = next.y - point.y;
+  return Math.abs(Math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y));
+}
+
+function circularDistance(a: number, b: number, n: number) {
+  const d = Math.abs(a - b);
+  return Math.min(d, n - d);
+}
+
+function isConvexQuad(quad: Quad) {
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = quad[i];
+    const b = quad[(i + 1) % 4];
+    const c = quad[(i + 2) % 4];
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(cross) < 1) return false;
+    const next = Math.sign(cross);
+    if (sign && next !== sign) return false;
+    sign = next;
+  }
+  for (let i = 0; i < 4; i++) {
+    const angle = interiorAngle(quad[(i + 3) % 4], quad[i], quad[(i + 1) % 4]);
+    if (angle < 0.55 || angle > 2.4) return false;
+  }
+  return true;
+}
+
+function convexHull(points: Point[]) {
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  const unique = sorted.filter((point, index) => index === 0 || point.x !== sorted[index - 1].x || point.y !== sorted[index - 1].y);
+  const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: Point[] = [];
+  for (const point of unique) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  const upper: Point[] = [];
+  for (let i = unique.length - 1; i >= 0; i--) {
+    const point = unique[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function boxBlur(src: Uint8Array, w: number, h: number, radius: number) {
+  const integral = new Uint32Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let x = 0; x < w; x++) {
+      row += src[y * w + x];
+      integral[(y + 1) * (w + 1) + x + 1] = integral[y * (w + 1) + x + 1] + row;
+    }
+  }
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - radius);
+    const y1 = Math.min(h, y + radius + 1);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(w, x + radius + 1);
+      const area = (x1 - x0) * (y1 - y0);
+      const sum =
+        integral[y1 * (w + 1) + x1] -
+        integral[y0 * (w + 1) + x1] -
+        integral[y1 * (w + 1) + x0] +
+        integral[y0 * (w + 1) + x0];
+      out[y * w + x] = sum / area;
+    }
+  }
+  return out;
 }
 
 /** Straightens the quad into a rectangle and optionally makes it look like a scanned page. */
