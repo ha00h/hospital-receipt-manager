@@ -140,7 +140,8 @@ function findKnown(text: string, names: string[]) {
 
 function guessInstitution(lines: string[]) {
   let best: { name: string; score: number } | null = null;
-  lines.forEach((line, index) => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
     const compactLine = line.replace(/[^가-힣A-Za-z0-9]/g, "");
     for (const suffix of PLACE_SUFFIXES) {
       let from = 0;
@@ -154,7 +155,7 @@ function guessInstitution(lines: string[]) {
         if (!best || score > best.score) best = { name, score };
       }
     }
-  });
+  }
   return best?.name ?? null;
 }
 
